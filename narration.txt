@@ -1,0 +1,13 @@
+This walkthrough shows how I hardened the CorpFlow SaaS schema against cross-tenant data leaks and role-based exposure.
+
+The original schema had users, projects, and billing details, but no tenant identity. A query without a WHERE tenant filter could return every organisation's data. Salary and billing fields were ordinary columns, roles were free-form strings, and a project owner referenced only a user ID. That allowed cross-tenant relationships. The audit records each finding before the refactor.
+
+My first decision was to add a tenants table and make tenant_id mandatory on every tenant-specific table. Users now have a constrained role: admin, manager, or user. Email is unique per tenant rather than globally, which allows separate companies to use the same address safely while preserving identity inside each company.
+
+The second decision was to make relationships tenant-aware. Projects now store both tenant_id and owner_id. A composite foreign key references users by the pair of tenant_id and id. This means a project in Tenant A cannot point to a user in Tenant B, even if the numeric user ID is supplied by mistake. Tenant and tenant-plus-owner indexes keep secure queries efficient.
+
+The third decision was to filter responses by role before sending them. Administrators can see all users, salary, billing details, and projects inside their tenant. Managers can see same-tenant users and projects but never salary or billing. Ordinary users see only their own profile and assigned projects. The API maps safe objects instead of serializing raw rows.
+
+The smoke test proves the boundary. An admin in Tenant 1 receives three Tenant 1 users and salary fields. A manager receives the same tenant users but no salary. A user receives only the user's own profile. A Tenant 1 requester cannot use a Tenant 2 context. A manager cannot access billing, while a Tenant 1 admin receives only Tenant 1 billing.
+
+The live preview exposes a health endpoint, and the README, AUDIT, and SECURITY files document the deployment and security decisions. The schema, API, indexes, and tests are committed in the public pull request. This design makes tenant isolation a structural property rather than a reminder for every developer who writes a query.

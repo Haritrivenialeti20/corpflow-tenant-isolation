@@ -1,0 +1,11 @@
+{
+  "name": "corpflow-tenant-isolation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tenant-isolated and role-aware CorpFlow API challenge submission",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/smoke-test.js",
+    "check": "node --check server.js && node --check tests/smoke-test.js"
+  }
+}

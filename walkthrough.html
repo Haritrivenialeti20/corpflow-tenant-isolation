@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;background:#111;color:#e9f0f2;font-family:Arial,sans-serif}.frame{width:1280px;height:720px;padding:54px 70px;background:#17232b;position:relative;overflow:hidden}.k{color:#70e0a0;font-weight:700;letter-spacing:3px;font-size:18px}.h{font-size:42px;font-weight:800;margin:16px 0 28px}.sub{font-size:22px;color:#a8bbc2;line-height:1.4}.code{background:#0c1216;border-radius:14px;padding:24px;color:#dbe8ec;font:18px/1.45 'DejaVu Sans Mono',monospace;white-space:pre-wrap}.bad{color:#ff8f8f}.good{color:#70e0a0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.card{border:1px solid #33464f;border-radius:14px;padding:22px}.footer{position:absolute;bottom:25px;left:70px;right:70px;color:#78919b;font-size:14px;border-top:1px solid #33464f;padding-top:10px;display:flex;justify-content:space-between}.pill{display:inline-block;color:#17232b;background:#70e0a0;border-radius:20px;padding:7px 14px;font-weight:700;margin:4px}
+</style></head><body>
+<section class="frame"><div class="k">CORPFLOW · BEFORE</div><div class="h">The broken schema had no isolation boundary</div><div class="grid"><div class="code"><span class="bad">CREATE TABLE users (</span>
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100),
+  email VARCHAR(100),
+  salary DECIMAL(10,2),
+  role VARCHAR(20)
+<span class="bad">);</span>
+
+<span class="bad">CREATE TABLE projects (... owner_id REFERENCES users(id));</span></div><div class="card"><div class="h" style="font-size:27px">Audit findings</div><div class="sub">No tenant_id on any table</div><div class="sub">Salary and billing fields exposed</div><div class="sub">Roles unconstrained</div><div class="sub">Owner foreign key could cross tenants</div><div class="sub">No tenant indexes or isolation tests</div></div></div><div class="footer"><span>Original code shown from original-schema.sql</span><span>1 / 5</span></div></section>
+<section class="frame"><div class="k">CORPFLOW · DECISION 01</div><div class="h">Anchor every record to a tenant</div><div class="code"><span class="good">CREATE TABLE tenants (...);</span>
+
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(100) NOT NULL,
+  role VARCHAR(20) NOT NULL
+    CHECK (role IN ('admin','manager','user')),
+  salary DECIMAL(10,2),
+  UNIQUE (tenant_id, email)
+);
+
+<span class="good">Every tenant-specific row now carries the isolation key.</span></div><div class="footer"><span>Decision: tenant_id is mandatory, not optional</span><span>2 / 5</span></div></section>
+<section class="frame"><div class="k">CORPFLOW · DECISION 02</div><div class="h">Make relationships tenant-aware</div><div class="code">CREATE TABLE projects (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  title VARCHAR(200) NOT NULL,
+  owner_id INTEGER NOT NULL,
+  <span class="good">CONSTRAINT projects_owner_same_tenant</span>
+  <span class="good">FOREIGN KEY (tenant_id, owner_id)</span>
+  <span class="good">REFERENCES users(tenant_id, id)</span>
+);
+
+<span class="good">The database rejects a project owner from another tenant.</span>
+CREATE INDEX idx_projects_tenant_owner
+  ON projects(tenant_id, owner_id);</div><div class="footer"><span>Decision: IDs alone are not a safe boundary</span><span>3 / 5</span></div></section>
+<section class="frame"><div class="k">CORPFLOW · DECISION 03</div><div class="h">Filter responses by role before sending</div><div class="grid"><div class="code"><span class="bad">// Never return raw rows</span>
+res.json(users.rows)
+
+<span class="good">// Map a safe response</span>
+const base = {
+  id: user.id,
+  name: user.name,
+  role: user.role
+}
+if (req.user.role === 'admin') {
+  base.salary = user.salary
+}
+return base</div><div class="card"><span class="pill">ADMIN · salary allowed</span><span class="pill">MANAGER · no salary</span><span class="pill">USER · self only</span><div class="sub" style="margin-top:25px">Billing details are admin-only. Every query is scoped to the requester's tenant before role rules run.</div></div></div><div class="footer"><span>Decision: never serialize raw database rows</span><span>4 / 5</span></div></section>
+<section class="frame"><div class="k">CORPFLOW · VERIFICATION</div><div class="h">The smoke test proves the boundary</div><div class="code">npm test
+
+<span class="good">PASS: tenant isolation, same-tenant ownership,</span>
+<span class="good">role filtering, and billing protection</span>
+
+Admin tenant 1 → 3 same-tenant users + salary
+Manager tenant 1 → 3 users, salary omitted
+User tenant 1 → own profile only
+Tenant 1 requester against tenant 2 → 403
+Manager billing request → 403
+Admin billing request → tenant 1 billing only</div><div class="sub" style="margin-top:24px">Live preview: https://4175-ips6j5fdth1e1ikgtkorw-f16c4bec.sg2.manus.computer/health</div><div class="footer"><span>Schema, API, documentation, and tests are committed in the PR</span><span>5 / 5</span></div></section>
+</body></html>
